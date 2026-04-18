@@ -1,0 +1,7 @@
+P_Value,Outcome,Cohort
+<.0001,MI,Overall
+<.0001,MI,Testosterone
+0.0165,Stroke,Overall
+0.5694,Stroke,Testosterone
+0.0064,VTE,Overall
+0.0476,VTE,Testosterone

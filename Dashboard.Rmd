@@ -1,0 +1,250 @@
+---
+title: "Cardiovascular Risk in Transmasculine Individuals"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+setwd("/Users/zolismith/Desktop/DATA 555 FINAL")
+
+library(tidyverse)
+library(plotly)
+library(DT)
+library(survival)
+library(flexdashboard)
+library(shiny)
+
+overall <- read.csv("analysis_overall(in).csv")
+testo   <- read.csv("analysis_testo(in).csv")
+logrank <- read.csv("logrank(in).csv")
+
+# Cox results hardcoded from your SAS output
+cox <- tribble(
+  ~Cohort,        ~Outcome,  ~Comparison,               ~HR,  ~Lower, ~Upper,
+  "Overall",      "VTE",     "TM vs. Reference Women",  1.57,  1.19,   2.09,
+  "Overall",      "VTE",     "TM vs. Reference Men",    1.42,  1.07,   1.88,
+  "Overall",      "Stroke",  "TM vs. Reference Women",  1.43,  1.03,   2.00,
+  "Overall",      "Stroke",  "TM vs. Reference Men",    1.16,  0.84,   1.60,
+  "Overall",      "MI",      "TM vs. Reference Women",  1.20,  0.67,   2.15,
+  "Overall",      "MI",      "TM vs. Reference Men",    0.51,  0.30,   0.89,
+  "Testosterone", "VTE",     "TM vs. Reference Women",  1.57,  1.19,   2.09,
+  "Testosterone", "VTE",     "TM vs. Reference Men",    1.42,  1.07,   1.88,
+  "Testosterone", "Stroke",  "TM vs. Reference Women",  1.43,  1.03,   2.00,
+  "Testosterone", "Stroke",  "TM vs. Reference Men",    1.16,  0.84,   1.60,
+  "Testosterone", "MI",      "TM vs. Reference Women",  1.20,  0.67,   2.15,
+  "Testosterone", "MI",      "TM vs. Reference Men",    0.51,  0.30,   0.89
+)
+```
+
+Cumulative Incidence
+======================================================================
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+selectInput("cohort", "Select Cohort:",
+            choices = c("Overall", "Testosterone"))
+
+selectInput("outcome", "Select Outcome:",
+            choices = c("VTE", "Stroke", "MI"))
+
+checkboxGroupInput("groups", "Select Groups:",
+                   choices  = c("TM", "Ref_Female", "Ref_Male"),
+                   selected = c("TM", "Ref_Female", "Ref_Male"))
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Cumulative Incidence Curve
+
+```{r}
+renderPlotly({
+  df <- if (input$cohort == "Overall") overall else testo
+
+  time_var <- switch(input$outcome,
+    "VTE"    = "time_vte_p",
+    "Stroke" = "time_str_p",
+    "MI"     = "time_mi_p")
+
+  event_var <- switch(input$outcome,
+    "VTE"    = "event_vte_p",
+    "Stroke" = "event_str_p",
+    "MI"     = "event_mi_p")
+
+  df <- df %>%
+    filter(group %in% input$groups, prior_acve == 0)
+
+  fit <- survfit(Surv(df[[time_var]], df[[event_var]]) ~ group, data = df)
+
+  # Build cumulative incidence (1 - survival)
+  strata_names <- rep(names(fit$strata), fit$strata)
+  surv_df <- data.frame(
+    time   = fit$time,
+    cum_inc = 1 - fit$surv,
+    group  = strata_names
+  )
+
+  # Clean up group labels
+  surv_df$group_label <- recode(surv_df$group,
+    "group=TM"         = "Transmasculine",
+    "group=Ref_Female" = "Reference Women",
+    "group=Ref_Male"   = "Reference Men"
+  )
+
+  plot_ly(
+    surv_df,
+    x     = ~time,
+    y     = ~cum_inc,
+    color = ~group_label,
+    colors = c("Transmasculine" = "black",
+               "Reference Women" = "blue",
+               "Reference Men"   = "red"),
+    type  = "scatter",
+    mode  = "lines",
+    hovertemplate = paste(
+      "Time: %{x:.1f} years<br>",
+      "Cumulative Incidence: %{y:.3f}<br>",
+      "Group: %{fullData.name}<extra></extra>"
+    )
+  ) %>%
+    layout(
+      title  = list(text = paste("Cumulative Incidence of", input$outcome,
+                                 "-", input$cohort, "Cohort")),
+      xaxis  = list(title = "Time (Years)", range = c(0, 18)),
+      yaxis  = list(title = "Cumulative Incidence", rangemode = "tozero"),
+      legend = list(title = list(text = "Group"))
+    )
+})
+```
+
+Cox Models
+======================================================================
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+selectInput("cox_cohort", "Select Cohort:",
+            choices = c("Overall", "Testosterone"))
+
+selectInput("cox_outcome", "Select Outcome:",
+            choices = c("VTE", "Stroke", "MI"))
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Adjusted Hazard Ratios (Forest Plot)
+
+```{r}
+renderPlotly({
+  df <- cox %>%
+    filter(Cohort == input$cox_cohort, Outcome == input$cox_outcome)
+
+  plot_ly(
+    df,
+    x    = ~HR,
+    y    = ~Comparison,
+    type = "scatter",
+    mode = "markers",
+    marker = list(size = 12, color = "black"),
+    error_x = list(
+      type      = "data",
+      symmetric = FALSE,
+      array     = ~Upper - HR,
+      arrayminus = ~HR - Lower,
+      color     = "black"
+    ),
+    hovertemplate = paste(
+      "Comparison: %{y}<br>",
+      "HR: %{x:.2f}<br>",
+      "<extra></extra>"
+    )
+  ) %>%
+    layout(
+      title  = list(text = paste("Hazard Ratios -", input$cox_outcome,
+                                 "-", input$cox_cohort, "Cohort")),
+      xaxis  = list(title = "Hazard Ratio (95% CI)",
+                    type  = "log",
+                    range = c(log10(0.2), log10(4))),
+      yaxis  = list(title = ""),
+      shapes = list(list(
+        type = "line",
+        x0 = 1, x1 = 1,
+        y0 = -0.5, y1 = 1.5,
+        line = list(dash = "dash", color = "gray")
+      ))
+    )
+})
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Cox Results Table
+
+```{r}
+renderDT({
+  cox %>%
+    filter(Cohort == input$cox_cohort, Outcome == input$cox_outcome) %>%
+    mutate(HR    = round(HR,    2),
+           Lower = round(Lower, 2),
+           Upper = round(Upper, 2)) %>%
+    datatable(
+      colnames = c("Cohort", "Outcome", "Comparison",
+                   "Hazard Ratio", "95% CI Lower", "95% CI Upper"),
+      options  = list(dom = "t", pageLength = 6)
+    )
+})
+```
+
+Log-Rank Tests
+======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Log-Rank Test Results
+
+```{r}
+renderDT({
+  logrank %>%
+    datatable(
+      options = list(pageLength = 6, dom = "tip"),
+      caption = "Log-Rank Test Results"
+    )
+})
+```
+
+Data Description
+======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+###
+
+**Dataset Description**
+
+Data were derived from the STRONG cohort, an electronic medical record-based matched cohort study conducted within Kaiser Permanente systems. The dataset includes approximately 345,000 individuals — transmasculine individuals and matched cisgender male and female referents. Data were collected from clinical records between 2006 and 2024. Outcomes include venous thromboembolism (VTE), stroke, and myocardial infarction (MI). This is a retrospective cohort study examining cardiovascular risk disparities in transgender populations.
+
+GitHub & Impact
+======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+###
+
+**Project Importance**
+
+This dashboard highlights cardiovascular risk differences among transmasculine individuals, supporting improved clinical decision-making and long-term monitoring strategies in gender-affirming care.
+
+**Source Code**
+
+GitHub: https://github.com/YOUR_USERNAME/YOUR_REPO
